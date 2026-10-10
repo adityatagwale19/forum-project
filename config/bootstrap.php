@@ -39,7 +39,8 @@ if (session_status() === PHP_SESSION_NONE) {
         // with a request started by another site
         'httponly' => true,
         'samesite' => 'Lax',
-        'secure' => ($_SERVER['HTTPS'] ?? 'off') !== 'off',
+        // some servers send HTTPS as an empty string on plain http
+        'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
     ]);
     session_start();
 }
