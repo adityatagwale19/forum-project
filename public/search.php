@@ -1,85 +1,66 @@
-<?php include 'partitions/db_connect.php'; ?>
-<!doctype html>
-<html lang="en">
+<?php
 
-<head>
-    <!-- Required meta tags -->
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+declare(strict_types=1);
 
-    <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css"
-        integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
+use Forum\Paginator;
 
-    <title>Search page</title>
-    <style>
-    #mainContainer {
-        min-height: 85vh;
-    }
-    </style>
-</head>
+$app = require __DIR__ . '/../config/bootstrap.php';
 
-<body>
+$term = isset($_GET['search']) && is_string($_GET['search']) ? trim($_GET['search']) : '';
+$perPage = (int) $app['config']['app']['per_page'];
 
-    <?php include 'partitions/db_connect.php'; ?>
-    <!-- header section starts -->
-    <?php include "partitions/header.php"; ?>
+$results = [];
+$pagination = null;
 
-    <div class="container my-2" id="mainContainer">
-        <h1>Result shown for <em>"<?php echo $_GET['search']; ?>"</em></h1>
-        <?php
-        $noResult = true;
-        $query = $_GET['search'];
-        // Sql query for fetch the data from databse and match the reesult
-        $sql = "SELECT * FROM threads WHERE MATCH(thread_title, thread_desc) AGAINST('$query')";
-        $result = mysqli_query($conn, $sql);
-        while ($row = mysqli_fetch_assoc($result)) {
-            $th_title = $row['thread_title'];
-            $th_desc = $row['thread_desc'];
-            $thread_id = $row['thread_id'];
-            $noResult = false;
-            echo '<div class="result py-2">
-            <h3><a href="/php/Forum_project/thread.php?threadId=' . $thread_id . '" class="text-success">' . $th_title . '</a></h3>
-            <p>' . $th_desc . '</p>
-        </div>';
-        }
-        if ($noResult) {
-            echo '<div class="jumbotron jumbotron-fluid">
-                    <div class="container">
-                    <h1 class="display-4">No results found</h1>
-                    <p class="lead">Suggestions: 
-                        <ul>
-                            <li>Make sure that all words are spelled correctly.</li>
-                            <li>Try different keywords.</li>
-                            <li>Try more general keywords.</li>
-                        </ul>
-                    </p>
-                    </div>
-                </div>';
-        }
-        ?>
-    </div>
+if ($term !== '') {
+    $pagination = new Paginator($app['threads']->countSearch($term), $perPage, $_GET['page'] ?? 1);
+    $results = $app['threads']->search($term, $pagination->perPage, $pagination->offset());
 
-    <!-- footer section starts -->
-    <div class="container-fluid bg-dark text-light pb-2">
-        <div class="text-center">Copyright iCoder online coding forum 2024 || All right reserved.</div>
-    </div>
-    <!-- Optional JavaScript; choose one of the two! -->
+    $pageLink = static fn (int $page): string =>
+        'search.php?search=' . rawurlencode($term) . '&page=' . $page;
+}
 
-    <!-- Option 1: jQuery and Bootstrap Bundle (includes Popper) -->
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"
-        integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous">
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-Fy6S3B9q64WdZWQUiU+q4/2Lc9npb8tCaSX9FK7E8HnRr0Jz8D6OP9dO5Vg3Q9ct" crossorigin="anonymous">
-    </script>
+$pageTitle = $term === '' ? 'Search' : 'Search: ' . $term;
 
-    <!-- Option 2: Separate Popper and Bootstrap JS -->
-    <!--
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.min.js" integrity="sha384-+sLIOodYLS7CIrQpBjl+C7nPvqq+FbNUBDunl/OZv93DB7Ln/533i8e/mZXLi/P+" crossorigin="anonymous"></script>
-    -->
-</body>
+require __DIR__ . '/../templates/layout/header.php';
 
-</html>
+?>
+<div class="container my-4">
+    <h2 class="mb-3">Search</h2>
+
+    <form action="search.php" method="get" class="form-inline mb-4" role="search">
+        <label class="sr-only" for="search">Search threads</label>
+        <input type="search" class="form-control mr-2" id="search" name="search" value="<?= e($term) ?>"
+            placeholder="Words in a title or a message">
+        <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+
+    <?php if ($term === '') : ?>
+        <p class="text-muted">Type something to search the threads.</p>
+    <?php elseif ($results === []) : ?>
+        <p class="text-muted">Nothing found for "<?= e($term) ?>".</p>
+    <?php else : ?>
+        <p class="text-muted">
+            <?= $pagination->total ?> result<?= $pagination->total === 1 ? '' : 's' ?> for "<?= e($term) ?>"
+        </p>
+
+        <div class="list-group mb-4">
+            <?php foreach ($results as $thread) : ?>
+                <div class="list-group-item">
+                    <h5 class="mb-1">
+                        <a href="thread.php?id=<?= (int) $thread['id'] ?>"><?= e($thread['title']) ?></a>
+                    </h5>
+                    <p class="mb-1 text-muted"><?= e(mb_strimwidth((string) $thread['body'], 0, 160, '...')) ?></p>
+                    <small class="text-muted">
+                        in <?= e($thread['category_name']) ?>
+                        by <?= e($thread['username']) ?>
+                        on <?= e(date('j M Y', strtotime((string) $thread['created_at']))) ?>
+                    </small>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <?php require __DIR__ . '/../templates/partials/pagination.php'; ?>
+    <?php endif; ?>
+</div>
+<?php require __DIR__ . '/../templates/layout/footer.php'; ?>
