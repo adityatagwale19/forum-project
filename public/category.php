@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
+use Forum\Csrf;
+use Forum\Flash;
 use Forum\Paginator;
+use Forum\Validator;
 
 $app = require __DIR__ . '/../config/bootstrap.php';
 
@@ -18,6 +21,38 @@ if ($category === null) {
         . '<p><a href="index.php">Back to all categories</a></p></div>';
     require __DIR__ . '/../templates/layout/footer.php';
     exit;
+}
+
+$errors = [];
+$old = ['title' => '', 'body' => ''];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $auth->requireLogin();
+
+    if (!Csrf::checkRequest()) {
+        Flash::error('That form expired. Please try again.');
+        redirect('category.php?id=' . $categoryId);
+    }
+
+    $validator = new Validator($_POST);
+    $validator->text('title', 'Title', 5, 190)->text('body', 'Message', 10, 5000);
+
+    $old['title'] = $validator->value('title');
+    $old['body'] = $validator->value('body');
+
+    if ($validator->passes()) {
+        $threadId = $app['threads']->create(
+            $categoryId,
+            (int) $auth->id(),
+            $old['title'],
+            $old['body']
+        );
+
+        Flash::success('Thread posted.');
+        redirect('thread.php?id=' . $threadId);
+    }
+
+    $errors = $validator->errors();
 }
 
 $perPage = (int) $app['config']['app']['per_page'];
@@ -40,7 +75,37 @@ require __DIR__ . '/../templates/layout/header.php';
     <h2><?= e($category['name']) ?></h2>
     <p class="text-muted"><?= e($category['description']) ?></p>
 
-    <?php if (!$auth->check()) : ?>
+    <?php if ($auth->check()) : ?>
+        <div class="card my-4">
+            <div class="card-body">
+                <h5 class="card-title">Start a thread</h5>
+
+                <form action="category.php?id=<?= $categoryId ?>" method="post" novalidate>
+                    <?= Csrf::field() ?>
+
+                    <div class="form-group">
+                        <label for="title">Title</label>
+                        <input type="text" class="form-control<?= isset($errors['title']) ? ' is-invalid' : '' ?>"
+                            id="title" name="title" value="<?= e($old['title']) ?>" required>
+                        <?php if (isset($errors['title'])) : ?>
+                            <div class="invalid-feedback"><?= e($errors['title']) ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="body">Message</label>
+                        <textarea class="form-control<?= isset($errors['body']) ? ' is-invalid' : '' ?>" id="body"
+                            name="body" rows="4" required><?= e($old['body']) ?></textarea>
+                        <?php if (isset($errors['body'])) : ?>
+                            <div class="invalid-feedback"><?= e($errors['body']) ?></div>
+                        <?php endif; ?>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Post thread</button>
+                </form>
+            </div>
+        </div>
+    <?php else : ?>
         <p><a href="login.php">Log in</a> to start a thread here.</p>
     <?php endif; ?>
 
