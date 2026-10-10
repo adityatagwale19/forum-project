@@ -69,6 +69,19 @@ class ThreadRepository
         );
     }
 
+    public function latestForUser(int $userId, int $limit): array
+    {
+        return $this->db->all(
+            'SELECT t.id, t.title, t.created_at, c.name AS category_name
+               FROM threads t
+               JOIN categories c ON c.id = t.category_id
+              WHERE t.user_id = ?
+              ORDER BY t.created_at DESC, t.id DESC
+              LIMIT ' . (int) $limit,
+            [$userId]
+        );
+    }
+
     public function countSearch(string $term): int
     {
         $pattern = self::likePattern($term);
