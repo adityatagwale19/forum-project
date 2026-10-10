@@ -1,0 +1,9 @@
+/vendor/
+.env
+.phpunit.result.cache
+.phpunit.cache/
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
