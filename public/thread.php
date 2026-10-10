@@ -1,158 +1,169 @@
-<!doctype html>
-<html lang="en">
+<?php
 
-<head>
-    <!-- Required meta tags -->
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+declare(strict_types=1);
 
-    <!-- Bootstrap CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css"
-        integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
+use Forum\Csrf;
+use Forum\Flash;
+use Forum\Paginator;
+use Forum\Validator;
 
-    <title>Discuss page</title>
-</head>
+$app = require __DIR__ . '/../config/bootstrap.php';
 
-<body>
-    <?php include 'partitions/db_connect.php' ?>
-    <?php
-    $id = $_GET['threadId'];
-    $sql = "SELECT * FROM threads WHERE thread_id = $id";
-    $result = mysqli_query($conn, $sql);
-    while ($row = mysqli_fetch_assoc($result)) {
-        $title = $row['thread_title'];
-        $desc = $row['thread_desc'];
-        $thread_user_id = $row['thread_user_id'];
+$auth = $app['auth'];
+$comments = $app['comments'];
 
-        // Sql query to know who is post this thread
-        $sql2 = "SELECT user_email FROM signup WHERE sno = '$thread_user_id'";
-        $result2 = mysqli_query($conn, $sql2);
-        $row2 = mysqli_fetch_assoc($result2);
-        $posted_by = $row2['user_email'];
+$threadId = isset($_GET['id']) && is_numeric($_GET['id']) ? (int) $_GET['id'] : 0;
+$thread = $threadId > 0 ? $app['threads']->find($threadId) : null;
+
+if ($thread === null) {
+    http_response_code(404);
+    $pageTitle = 'Thread not found';
+    require __DIR__ . '/../templates/layout/header.php';
+    echo '<div class="container my-5"><h2>That thread does not exist.</h2>'
+        . '<p><a href="index.php">Back to all categories</a></p></div>';
+    require __DIR__ . '/../templates/layout/footer.php';
+    exit;
+}
+
+$perPage = (int) $app['config']['app']['per_page'];
+$errors = [];
+$old = ['body' => ''];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $auth->requireLogin();
+
+    if (!Csrf::checkRequest()) {
+        Flash::error('That form expired. Please try again.');
+        redirect('thread.php?id=' . $threadId);
     }
-    ?>
 
-    <?php
-    $method = $_SERVER['REQUEST_METHOD'];
-    $successAlert = false;
-    if ($method == "POST") {
-        $comments = $_POST['comment'];
-        //replace < and > by &lt; for defend js execution
-        $comments = str_replace("<", "&lt;", $comments);
-        $comments = str_replace(">", "&gt;", $comments);
-        $sno = $_POST['sno'];
-        $sql = "INSERT INTO `comments` (`comment_content`, `thread_id`, `comment_by`, `comment_time`)
-                VALUES ('$comments', '$id', '$sno', now());";
-        $result = mysqli_query($conn, $sql);
-        $successAlert = true;
+    $validator = new Validator($_POST);
+    $validator->text('body', 'Comment', 2, 5000);
+    $old['body'] = $validator->value('body');
+
+    if ($validator->passes()) {
+        $comments->create($threadId, (int) $auth->id(), $old['body']);
+
+        // comments run oldest first, so the new one sits on the last page
+        $lastPage = (int) ceil(($comments->countForThread($threadId)) / max(1, $perPage));
+
+        Flash::success('Comment added.');
+        redirect('thread.php?id=' . $threadId . '&page=' . max(1, $lastPage) . '#comments');
     }
-    ?>
-    <!-- Nvabar starts here -->
-    <?php include "partitions/header.php"; ?>
 
-    <!-- PHP script for success msg -->
-    <?php
-    if ($successAlert) {
-        echo '<div class="alert alert-success alert-dismissible fade show" role="alert">
-                <strong>Success!</strong> Your comment is added.
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                <span aria-hidden="true">&times;</span>
-                </button>
-              </div>';
-    }
-    ?>
+    $errors = $validator->errors();
+}
 
-    <!-- Discusoon starts here -->
-    <div class="container my-3">
-        <div class="jumbotron">
-            <h1 class="display-4"> <?php echo  $title  ?> </h1>
-            <p class="lead"><?php echo $desc  ?></p>
-            <p>Posted By - <em><?php echo $posted_by ?></em></p>
-            <hr class="my-4">
-            <p>Never post personal information about another forum participant. <br>
-                Don't post anything that threatens or harms the reputation of any person or organization.<br>
-                Don't post anything that could be considered intolerant of a person's race, culture, appearance, gender,
-                sexual preference, religion or age.</p>
+$pagination = new Paginator($comments->countForThread($threadId), $perPage, $_GET['page'] ?? 1);
+$threadComments = $comments->forThread($threadId, $pagination->perPage, $pagination->offset());
 
+$pageLink = static fn (int $page): string => 'thread.php?id=' . $threadId . '&page=' . $page . '#comments';
+
+$pageTitle = $thread['title'];
+
+require __DIR__ . '/../templates/layout/header.php';
+
+?>
+<div class="container my-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="index.php">Home</a></li>
+            <li class="breadcrumb-item">
+                <a href="category.php?id=<?= (int) $thread['category_id'] ?>"><?= e($thread['category_name']) ?></a>
+            </li>
+            <li class="breadcrumb-item active" aria-current="page"><?= e($thread['title']) ?></li>
+        </ol>
+    </nav>
+
+    <article class="card mb-4">
+        <div class="card-body">
+            <h2 class="card-title h4"><?= e($thread['title']) ?></h2>
+            <p class="text-muted small">
+                by <?= e($thread['username']) ?>
+                on <?= e(date('j M Y, H:i', strtotime((string) $thread['created_at']))) ?>
+                <?php if ($thread['updated_at'] !== null) : ?>
+                    (edited <?= e(date('j M Y, H:i', strtotime((string) $thread['updated_at']))) ?>)
+                <?php endif; ?>
+            </p>
+            <div class="post-body"><?= e($thread['body']) ?></div>
+
+            <?php if ($auth->owns((int) $thread['user_id'])) : ?>
+                <div class="mt-3">
+                    <a href="thread-edit.php?id=<?= (int) $thread['id'] ?>" class="btn btn-sm btn-outline-primary">Edit</a>
+
+                    <form action="thread-delete.php" method="post" class="d-inline"
+                        onsubmit="return confirm('Delete this thread and its comments?');">
+                        <?= Csrf::field() ?>
+                        <input type="hidden" name="id" value="<?= (int) $thread['id'] ?>">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                    </form>
+                </div>
+            <?php endif; ?>
         </div>
-        <hr>
-    </div>
-    <!-- Form starts here -->
+    </article>
 
-    <?php
-    if (isset($_SESSION['loggedIn']) && $_SESSION['loggedIn'] == true) {
-        echo '<div class="container">
-        <h1>Post a Comment</h1>
-        <form action="' . $_SERVER['REQUEST_URI'] . '" method="post">
-            <div class="form-group">
-                <label for="exampleForDesc">Add Comment</label>
-                <textarea class="form-control" id="comment" name="comment" rows="3"></textarea>
-                <input type="hidden" name="sno" value="' . $_SESSION["sno"] . '">
-            </div>
-            <button type="submit" class="btn btn-success">Post</button>
-        </form>
-        <hr>
-    </div>';
-    } else {
-        echo '<div class="container">
-        <h1>Post a comment</h1>
-        <p class="lead">Please login to Post a comments.</p>
-        <hr>
-        </div>';
-    }
+    <h3 class="h5" id="comments">
+        <?= $pagination->total ?> comment<?= $pagination->total === 1 ? '' : 's' ?>
+    </h3>
 
-    ?>
-    <div class="container">
-        <h1>Discussions</h1>
-        <?php
-        $id = $_GET['threadId'];
-        $sql = "SELECT * FROM comments  WHERE thread_id = $id";
-        $result = mysqli_query($conn, $sql);
-        $noResult = true;
-        while ($row = mysqli_fetch_assoc($result)) {
-            $noResult = false;
-            $id = $row['comment_id'];
-            $comment = $row['comment_content'];
-            $comment_by = $row['comment_by'];
-            $sql2 = "SELECT user_email FROM signup WHERE sno = '$comment_by'";
-            $result2 = mysqli_query($conn, $sql2);
-            $row2 = mysqli_fetch_assoc($result2);
+    <?php if ($threadComments === []) : ?>
+        <p class="text-muted">No comments yet.</p>
+    <?php else : ?>
+        <div class="list-group mb-4">
+            <?php foreach ($threadComments as $comment) : ?>
+                <div class="list-group-item">
+                    <p class="text-muted small mb-2">
+                        <?= e($comment['username']) ?>
+                        on <?= e(date('j M Y, H:i', strtotime((string) $comment['created_at']))) ?>
+                        <?php if ($comment['updated_at'] !== null) : ?>
+                            (edited)
+                        <?php endif; ?>
+                    </p>
+                    <div class="post-body"><?= e($comment['body']) ?></div>
 
-            echo '<div class="media py-3">
-                    <img src="assets/images/boy.png" width="64px" class="mr-3" alt="...">
-                    <div class="media-body">
-                    <p class="font-weight-bold my-0">' . $row2['user_email'] . '</p>
-                    <p>' . $comment . '</p>
+                    <?php if ($auth->owns((int) $comment['user_id'])) : ?>
+                        <div class="mt-2">
+                            <a href="comment-edit.php?id=<?= (int) $comment['id'] ?>"
+                                class="btn btn-sm btn-outline-primary">Edit</a>
+
+                            <form action="comment-delete.php" method="post" class="d-inline"
+                                onsubmit="return confirm('Delete this comment?');">
+                                <?= Csrf::field() ?>
+                                <input type="hidden" name="id" value="<?= (int) $comment['id'] ?>">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <?php require __DIR__ . '/../templates/partials/pagination.php'; ?>
+    <?php endif; ?>
+
+    <?php if ($auth->check()) : ?>
+        <div class="card my-4">
+            <div class="card-body">
+                <h5 class="card-title">Add a comment</h5>
+
+                <form action="thread.php?id=<?= $threadId ?>" method="post" novalidate>
+                    <?= Csrf::field() ?>
+
+                    <div class="form-group">
+                        <label for="body">Comment</label>
+                        <textarea class="form-control<?= isset($errors['body']) ? ' is-invalid' : '' ?>" id="body"
+                            name="body" rows="3" required><?= e($old['body']) ?></textarea>
+                        <?php if (isset($errors['body'])) : ?>
+                            <div class="invalid-feedback"><?= e($errors['body']) ?></div>
+                        <?php endif; ?>
                     </div>
-                    </div>';
-        }
 
-        if ($noResult) {
-            echo '<div class="jumbotron jumbotron-fluid">
-            <div class="container">
-                <h1 class="display-4">No Comments found</h1>
-                <p class="lead">Be the first one to comment.</p>
+                    <button type="submit" class="btn btn-primary">Post comment</button>
+                </form>
             </div>
-        </div>';
-        }
-        ?>
-    </div>
-    <!-- Optional JavaScript; choose one of the two! -->
-
-    <!-- Option 1: jQuery and Bootstrap Bundle (includes Popper) -->
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"
-        integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous">
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-Fy6S3B9q64WdZWQUiU+q4/2Lc9npb8tCaSX9FK7E8HnRr0Jz8D6OP9dO5Vg3Q9ct" crossorigin="anonymous">
-    </script>
-
-    <!-- Option 2: Separate Popper and Bootstrap JS -->
-    <!--
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.min.js" integrity="sha384-+sLIOodYLS7CIrQpBjl+C7nPvqq+FbNUBDunl/OZv93DB7Ln/533i8e/mZXLi/P+" crossorigin="anonymous"></script>
-    -->
-</body>
-
-</html>
+        </div>
+    <?php else : ?>
+        <p><a href="login.php">Log in</a> to comment.</p>
+    <?php endif; ?>
+</div>
+<?php require __DIR__ . '/../templates/layout/footer.php'; ?>
